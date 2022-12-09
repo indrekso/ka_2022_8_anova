@@ -1,0 +1,77 @@
+---
+title: "Dispersioonanalüüs"
+author: "Indrek Soidla"
+date: '2022-12-09'
+output: 
+  html_document:
+    theme: spacelab
+    highlight: tango
+    fig_cap: true
+    toc: true
+    toc_float: true
+    toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(haven)
+library(tidyverse)
+library(TAM)
+```
+
+```{r}
+ee9 <- read_spss("data/ee9.sav")
+```
+
+```{r}
+ee9 <- ee9 %>% 
+  mutate(trust = (trstprl + trstlgl + trstplc + trstplt + trstprt) / 5)
+
+ee9 <- ee9 %>% 
+  mutate(vanusegrupp = case_when(agea < 25 ~ "15-24",
+                                 agea < 35 ~ "25-34",
+                                 agea < 45 ~ "35-44",
+                                 agea < 55 ~ "45-54",
+                                 agea < 65 ~ "55-64",
+                                 agea < 75 ~ "65-74",
+                                 agea >= 75 ~ "75+"))
+
+trust_keskm <- ee9 %>% 
+  group_by(vanusegrupp) %>% 
+  summarise(keskmine = weighted_mean(trust, w = pspwght))
+
+trust_keskm
+
+ggplot(trust_keskm) +
+  geom_point(aes(x = vanusegrupp, y = keskmine), stat = "identity") +
+  xlab("Vanusegrupp") +
+  ylab("Usalduse koondindeksi keskmine skaalal 0-10")
+
+aov_trust_vanusegrupp <- aov(trust ~ as.factor(vanusegrupp), ee9, weights = pspwght)
+
+TukeyHSD(aov_trust_vanusegrupp) %>% 
+  plot()
+
+aov(grspnum ~ as.factor(polintr), ee9, weights = pspwght) %>% 
+  TukeyHSD()
+
+
+aov_trust_vanusegrupp <- aov(trust ~ as.factor(vanusegrupp), ee9)
+
+TukeyHSD(aov_trust_vanusegrupp) %>% 
+  plot()
+
+posthocPairwiseT(aov_trust_vanusegrupp)
+```
+
+Kas saab kaalutud andmetega kasutada lsr::posthocPairwiseT samamoodi nagu TukeyHSD-d? Kas lsr-i funktsioon annab ilma ise kaale arvesse võtmata sama tulemuse nagu 
+  - TukeyHSD?
+    - kui p.adjust ei kasuta, siis ei anna, kui kasutada, siis holm annab peaaegu sama tulemuse, aga natuke konservatiivsema
+  - t.test?
+  - wtd.t.test?
+  
+Läheb keeruliseks, lihtsam on öelda, et nii nagu Navarro raamatus on tehtud, saab teha küll, aga lihtsam on TukeyHSD-ga. TukeyHSD peaks arvesse võtma andmete kaalumist, eraldi veel kord kaaluda pole vaja.
