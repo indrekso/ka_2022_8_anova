@@ -17,15 +17,190 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 
-```{r}
+```{r message = FALSE, warning = FALSE}
 library(haven)
 library(tidyverse)
+library(survey)
+library(weights)
+library(summarytools)
+library(ggpubr)
 library(TAM)
 ```
 
 ```{r}
 ee9 <- read_spss("data/ee9.sav")
 ```
+
+## Ühefaktoriline dispersioonanalüüs
+
+Uurime, kas usaldus poliitikute vastu on seotud haridustasemega, st kas usaldus poliitikute vastu keskmiselt erineb haridustasemeti. 
+
+Kodeerime haridustaseme tunnuse neljakategoorialiseks ja reastame kategooriad ehk tasemed sisu järgi.
+
+```{r}
+ee9 <- ee9 %>% 
+  mutate(haridustase = case_when(edlvdee <= 213 ~ "Põhiharidus või madalam",
+                                 edlvdee == 313 ~ "Keskharidus",
+                                 edlvdee < 600 ~ "Kutseharidus",
+                                 edlvdee <= 800 ~ "Kõrgharidus"))
+
+ee9$haridustase <- fct_relevel(ee9$haridustase, 
+                               "Põhiharidus või madalam", 
+                               "Keskharidus", 
+                               "Kutseharidus", 
+                               "Kõrgharidus")
+```
+
+Seda, kas usaldus poliitikute vastu erineb haridustasemeti, saaksime teada nt dispersioonanalüüsi põhjal, kuid tavaliselt oleme enne huvitatud keskmistest, mis annavad umbkaudse pildi võimalikest erinevustest, lisaks võiksime võrrelda ka keskmiste usaldusvahemikke.
+
+Enne aritmeetiliste keskmiste arvutamist oleme tavaliselt kontrollinud, kas tunnuse jaotus (antud juhul usalduspoliitikute vastu haridustasemeti) on normaaljaotuse lähedane. Ka siin võib seda teha, kuid dispersioonanalüüsis on sellest olulisem jääkide jaotuse lähedus normaaljaotusele. Üldiselt on tunnuse ja jääkide jaotus omavahel seotud, st kui üks ei ole normaaljaotusega, siis tihti pole ka teine. Sellegipoolest võib põhimõtteliselt ette tulla olukordi, kus tunnuse jaotus ei ole lähedane normaaljaotusele, kuid jääkide jaotus enam-vähem on - sellisel juhul tuleks meetodi eelduste täidetuse hindamisel lähtuda jääkide jaotusest.
+
+```{r fig.cap = "*Joonis 1. Keskmine usaldus poliitikute vastu haridustaseme lõikes koos usaldusvahemikega usaldusnivool 95%.*"}
+ee9w <- svydesign(id = ~1, data = ee9, weights = ~pspwght)
+
+svyby(~trstplt, ~haridustase, design = ee9w, FUN = svymean, na.rm = TRUE, vartype = c("se", "ci")) %>% 
+  ggplot(aes(haridustase, trstplt)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = ci_l, ymax = ci_u), width = 0.1) +
+  xlab("Haridustase") +
+  ylab("Usaldus poliitikute vastu")
+```
+
+Näeme, et põhi- või madalama haridusega ja keskharidusega inimeste keskmise usalduse erinevust väita ei saa, kutse- ja kõrgharidusega inimeste vahel on erinevus. Ülejäänud haridustasemete keskmise usalduse usaldusvahemike vahel esineb kattuvusi, kuid need pole suured, seega pigem võiks arvata, et nende vahel erinevused esinevad.
+
+Teeme ühefaktorilise dispersioonanalüüsi, omistame selle tulemuse objektile `aov_trstplt_haridustase` ja vaatame tulemusi.
+
+```{r}
+aov_trstplt_haridustase <- aov(trstplt ~ haridustase, ee9, weights = pspwght)
+
+summary(aov_trstplt_haridustase)
+```
+
+Dispersioonanalüüsi tabel ütleb, et rühmadevaheliste ruuthälvete summa on 177 ja rühmadesiseste ruuthälvete summa 9169. Nende põhjal saame arvutada mõju suuruse *(effect size)* ehk eeta ruudu.
+
+```{r}
+177 / (177 + 9169)
+```
+
+Antud juhul on see väike, $\eta^2 = 0.02$, mis tähendab, et haridustase seletab 2% poliitikute usaldamise variatiivsusest. Pole palju, aga arvestades, et ühe haridustaseme sees võib usaldus poliitikute vastu päris palju varieeruda, ei ole see midagi üllatavat - üllatav oleks hoopis $\eta^2$ kõrge väärtus (nt $\eta^2 > 0.2$), mis tähendaks, et ühe haridustaseme sees on usaldushinnangud väga sarnased ja haridustasemeti keskmiselt selgelt erinevad.
+
+Vabadusastmete arvuga läbi jagatud ruuthälvete summmad on vastavalt 58.94 ja 4.88, nende jagatis, *F*-suhe, on $F(3, 1880) = 12.08, p = 7.8 * 10^{-8}$ ehk $p < 0.001$. Ka kõige rangemal olulisuse nivool 0.001 saab nullhüpoteesi keskmiste samasusest kummutada ja väita, et vähemalt ühe haridustaseme puhul on poliitikute usaldamise keskmine erinev üldkeskmisest. 
+## Paarisvõrdlused, mitmete testimine
+
+Millise või milliste haridustasemete usalduse keskmine erineb, seda dispersioonanalüüs meile ei ütle, selleks tuleb teha *post-hoc* testid. Navarro (2018) peatükis 14 on näited selle kohta, kuidas keskmiste erinevust paariti *t*-testide abil hinnata ja mitmese võrdluse tõttu korrigeerida ka olulisuse tõenäosusi. Nii võib täiesti teha, kuid lihtsam (nagu Navarro ka hiljem peatükis 16 välja toob) on teha Tukey HSD *(honestly significant difference)* testid. Tukey HSD test korrigeerib ise ka olulisuse tõenäosused, siin ei kasutata Bonferroni ega Holmi parandust, vaid Tukey HSD parandus põhineb Studenti haarde jaotusel (Holmi parandusest tulemus palju ei erine). Nii palju kui uurisin, peaks Tukey HSD testid arvestama ka asjaoluga, et dispersioonanalüüsis on kasutatud kaale.
+
+Tukey HSD test annab väljundiks iga paarisvõrdluse kohta keskmiste erinevuse, selle alumise ja ülemise usalduspiiri usaldusnivool 95% ja korrigeeritud olulisuse tõenäosuse, sealjuures on eri võrdluspaaride usalduspiirid samuti mitmese võrdluse suhtes korrigeeritud. Tabelist saab teada täpsed näitajad, keskmiste erinevusi ja nende usaldusvahemikke on ilmselt lihtsam võrrelda jooniselt. Siiski kulub ka siin tabel marjaks ära, sest testitulemuste plot-käsuga visualiseerimisel ei saa kahjuks muuta telgede väärtusi, mistõttu mitmed kategooriate nimed y-teljel kattuvad ja sellest, milline usaldusvahemik käib millise võrdluse kohta, saab aimu tabeli abiga.
+
+```{r fig.cap = "*Joonis 2. Keskmiste erinevused haridustasemete paarisvõrdluste korral koos Tukey HSD testide põhjal korrigeeritud usaldusvahemikega usaldusnivool 95%.*"}
+TukeyHSD(aov_trstplt_haridustase) 
+
+TukeyHSD(aov_trstplt_haridustase) %>% 
+  plot()
+```
+
+Tabelist ja jooniselt on näha, et vaid kutseharidusega inimeste keskmine usaldus poliitikute vastu erineb teistest gruppidest, põhi- või madalama haridusega, keskharidusega ja kõrgharidusega inimeste usalduse keskmiste erinevust olulisuse nivool 0.05 väita ei saa, sest usaldusnivool 95% katavad nende võrdluspaaride keskmise erinevuse usaldusvahemikud nullpunkti ning olulisuse tõenäosused on üle 0,05.
+
+Tukey HSD testib kahe grupi keskmiste erinevust, testi sisu poolest on tegu samasuguse testiga nagu *t*-test. Siiski, kui teeksime paarisvõrdluse lihtsalt tavaliste sõltumatute kogumite t-testidega, siis saaksime statistiliselt olulisi tulemusi rohkem, nt kõrgharidusega ja keskharidusega gruppide võrdlemisel.
+
+```{r}
+ee9_har_kõrg <- ee9 %>% 
+  filter(haridustase == "Kõrgharidus")
+
+ee9_har_kesk <- ee9 %>% 
+  filter(haridustase == "Keskharidus")
+
+wtd.t.test(ee9_har_kõrg$trstplt, ee9_har_kesk$trstplt, ee9_har_kõrg$pspwght, ee9_har_kesk$pspwght)
+```
+
+Tukey HSD test andis nende gruppide võrdlemisel tulemuseks $p = 0.14$, *t*-test annab $p = 0.03$. Erinevus tuleneb sellest, et Tukey HSD test võtab vaikimisi arvesse mitmese võrdluse eripära ehk paarisvõrdluste puhul arvutatakse olulisuse tõenäosused, eeldades nullhüpoteesi kehtimist kõigi testide puhul samaaegselt. Teisisõnu, kas mingi võrdluspaari puhul keskmiste erinevust saab kinnitada või mitte, hinnatakse koos teiste võrdluspaaridega, mitte teistest testidest isolatsioonis nagu *t*-testide puhul (kui olulisuse tõenäosusi ei korrigeerita).
+
+See on ka põhjus, miks üksteisega sisuliselt seotud *t*-teste pole hea palju teha, vaid pigem piirduda ainult kahe kogumi võrdlemisega, st ühe paaristestiga. Kui soovime võrrelda rohkem kui kahte kogumit, sealjuures kõiki kogumeid omavahel võrreldes, võiks kasutada Tukey HSD testi või mitme t-testi puhul korrigeerida olulisuse tõenäosuseid (nt Holmi parandusega).
+
+## Eelduste kontroll
+
+Dispersioonanalüüsi tegime juba läbi ja tõlgendasime ka tulemusi. Ideaalne ja mõttekas oleks dispersioonanalüüsi eelduste täidetust kontrollida enne dispersioonanalüüsi läbiviimist, aga see pole paraku võimalik, sest eeldused on seotud jääkidega, mille saame alles analüüsi läbitegemisega. 
+
+### Jääkide homoskedastilisus
+
+Navarro kasutab jääkide homoskedastilisuse hindamiseks Levene'i testi, mis on küll üks võimalus, aga tulemus (olulisuse tõenäosus ja seega ka järeldus) sõltub muuhulgas indiviidide arvust - mida suurem on indiviidide arv, seda kergemini ilmneb statistiliselt oluline erinevus jääkide hajuvuses grupiti juba väga väikeste erinevuste korral. Seetõttu on eksijärelduste vältimiseks mõttekam hinnata jääkide homoskedastilisust (ja hiljem ka jääkide normaaljaotusele vastavust) visuaalselt. See pole küll nii konkreetne, kuid siin ei olegi mõttekas mingit konkreetset piiri tõmmata, kust maalt on jääkide hajuvuse erinevus grupiti liiga suur või veel ok.
+
+Kõige lihtsam oleks jääkide homoskedastilisuse eeldust visuaalselt kontrollida funktsiooniga `plot`. Kuna selle funktsiooni rakendamine ANOVA tulemuste objektile annab neli erinevat diagrammi, mille põhjal saab teha järeldusi meetodi eelduste täidetuse kohta, siis antud juhul täpsustame eraldi argumendiga diagrammi järjekorranumbri 1.
+
+```{r fig.cap = "*Joonis 3. Jääkide homoskedastilisuse kontroll hajuvusdiagrammi abil funktsiooniga `plot`.*"}
+plot(aov_trstplt_haridustase, 1)
+```
+
+Joonisel on y-teljel usalduse keskmised, y-teljel jäägid. Jäägid on homoskedastilised, kui nende hajuvus ei sõltu usalduse keskmisest, st erinevate haridustasemete ehk erineva usalduse keskmise puhul on jääkide hajuvus sarnane (st ei ole nii, et ühes grupis on peaasjalikult positiivsed ja teises negatiivsed jäägid). Antud juhul see diagramm meile aga midagi sisulist ei ütle, sest meie arvuline tunnus on ainult pidevana *tõlgendatav*, tunnuses on aga diskreetsed väärtused, st eristuvaid väärtuseid on vähe, seetõttu palju punkte joonisel kattub üksteisega. Seega teeme joonise, kus kattuvate punktide arvu näitab punkti suurus.
+
+```{r fig.cap = "*Joonis 4. Jääkide homoskedastilisuse kontroll mulldiagrammi abil funktsioonidega `ggplot` ja `geom_count`.*"}
+ggplot(aov_trstplt_haridustase, 
+       aes(aov_trstplt_haridustase$fitted.values, aov_trstplt_haridustase$residuals)) +
+  geom_count() +
+  xlab("Keskmine usaldus poliitikute vastu") +
+  ylab("Jäägid")
+```
+
+Pilt on natuke arusaadavam, näib, et jääkide hajuvus ei sõltu eriti haridustasemest, aga selgeid järeldusi tundub ikka raske teha. Ühemõttelisema pildi annab siinkohal karpdiagramm. (Kust me teame, millises alamobjektis on `aov_trstplt_haridustase` puhul jäägid, haridustaseme väärtused vms? Vt `View(aov_trstplt_haridustase)` ja kola erinevate alamobjektide vahel ringi kuni midagi tuttavat silma hakkab.) 
+
+```{r fig.cap = "*Joonis 5. Jääkide homoskedastilisuse kontroll karpdiagrammi abil funktsioonidega `ggplot` ja `geom_boxplot`.*"}
+ggplot(aov_trstplt_haridustase, 
+       aes(aov_trstplt_haridustase$model$haridustase,
+           aov_trstplt_haridustase$residuals)) +
+  geom_boxplot() +
+  xlab("Haridustase") +
+  ylab("Jäägid")
+```
+
+Kasti keskel olev tumedam joon näitab vastava haridustaseme korral jääkide mediaani, karbi ülemine ja alumine äär jääkide jaotuse ülemise ja alumise kvantiili piiri, punktid erindeid. Antud juhul tundub, et kõik neli karpdiagrammi on üsna ühesuguse kujuga, mediaanid ja kvartiilid pole üksteisest väga erinevad, seega võib eeldada jääkide piisavat homoskedastilisust.
+
+```{r}
+resid_df <- data.frame(aov_trstplt_haridustase$model$haridustase,
+           aov_trstplt_haridustase$residuals)
+
+names(resid_df) <- c("haridustase", "jääk")
+
+resid_df %>% 
+  group_by(haridustase) %>% 
+  summarise(disp = var(jääk))
+```
+
+Dispersioonide erinevus on kaugel kahekordsest, rääkimata kolmekordsest erinevusest, nii et homoskedastilisuse eelduse võib täidetuks lugeda ka nende näitajate põhjal.
+
+### Jääkide jaotumine normaaljaotuse kohaselt
+
+Kõige lihtsam on seda kontrollida histogrammi abil.
+
+```{r fig.cap = "*Joonis 6. Poliitikute usaldamise ja haridustaseme dispersioonanalüüsi jääkide jaotus histogrammil.*"}
+
+resid <- aov_trstplt_haridustase %>% 
+  residuals()
+
+hist(resid)
+```
+
+Tundub, et esineb mõningane asümmeetrilisus, aga mitte suur. Abiks on ka kvantiilgraafik, normaaljaotuse puhul peaksid punktid joonisel langema ühte diagonaaljoonega. Siin saab kasutada funktsiooni `qqnorm`, aga paketi `ggpubr` funktsioon `ggqqplot` lisab ka diagonaaljoone, mis muudab hinnangu andmise lihtsamaks.
+
+```{r warning = FALSE, fig.cap = "*Joonis 7. Poliitikute usaldamise ja haridustaseme dispersioonanalüüsi jääkide jaotus kvantiildiagrammil.*"}
+ggqqplot(resid)
+```
+
+Jaotuse madalamas otsas ehk suurte negatiivsete jääkide puhul ei vasta jaotus päris normaaljaotusele, aga muus osas on punktid diagonaaljoonele lähedal küll. See peaks antud juhul hinnanguks piisav olema, aga kontrolliks võib veel arvutada ka jääkide asümmeetria- ja järskuskordajad.
+
+```{r}
+descr(resid)
+```
+
+Asümmeetriakordaja on praktiliselt null, järskurskordaja erineb nullist rohkem ja näitab normaaljaotusest õhemate sabade olemasolu jaotuses, aga seegi erinevus normaaljaotusest on väike.
+
+### Vaatluste sõltumatus
+
+Vaatluste ehk indiviidide sõltumatust ei saa otseselt kontrollida andmete pealt, selle täidetus sõltub uuringu metoodikast. ESS põhineb tõenäosuslikul valimil, sealjuures pole tegu klastervalimiga, seega peaks ka vaatluste sõltumatuse eeldus täidetud olema.
+
+## Praktikumieelne ülesanne {.tabset .tabset-pills .tabset-fade}
+
+### Küsimus
+
+Kolmandas teemas oli boonusülesanne, milles tuli punktdiagrammi abil leida, kas usaldusindeksi ja vanusegrupi vahel võiks olla mingi seos. Diagramm nägi välja järgmine ja ainult keskmiste põhjal võiks eeldada teatud laadi U-kujulise seose olemasolu, kus keskmiselt on kõige kõrgem usaldus institutsioonide vastu noorimas vanusegrupis, seejärel usaldus langeb ja hakkab tõusma umbes keskeas. Kas dispersioonanalüüs ja sellele järgnev mitmene võrdlus kinnitab sellist seost? Kontrollige ka dispersioonanalüüsi eelduste täidetust. Selgitage iga järelduse puhul, mille põhjal täpselt seda väidate.
 
 ```{r}
 ee9 <- ee9 %>% 
@@ -44,17 +219,95 @@ trust_keskm <- ee9 %>%
   group_by(vanusegrupp) %>% 
   summarise(keskmine = weighted_mean(trust, w = pspwght))
 
-trust_keskm
-
 ggplot(trust_keskm) +
   geom_point(aes(x = vanusegrupp, y = keskmine), stat = "identity") +
   xlab("Vanusegrupp") +
   ylab("Usalduse koondindeksi keskmine skaalal 0-10")
+```
 
-aov_trust_vanusegrupp <- aov(trust ~ as.factor(vanusegrupp), ee9, weights = pspwght)
+Edasi tehke iseseisvalt, vajadusel küsige abi. Esitage ülesande lahendus kas:
+
+- Rmarkdowniga tehtud html-failina või
+- nagu varasemalt skriptifailis, kuhu lisage ka lahenduseni jõudmiseks vajalikud eelnevad käsud (nt pakettide laadimine, andmete sisselugemine).
+
+Proovige ülesanne teha kõigepealt iseseisvalt eelneva koodi põhjal. Kui see ei õnnestu, siis vaadake käskude väljundit ja/või käske kõrvalolevalt paanilt.
+
+### Tulemus ja lahendus
+
+```{r}
+aov_trust_vanusegrupp <- aov(trust ~ vanusegrupp, ee9, weights = pspwght)
+
+summary(aov_trust_vanusegrupp)
+
+TukeyHSD(aov_trust_vanusegrupp) 
 
 TukeyHSD(aov_trust_vanusegrupp) %>% 
   plot()
+```
+
+#### Eelduste kontroll
+
+```{r warning = FALSE}
+ggplot(aov_trust_vanusegrupp, 
+       aes(aov_trust_vanusegrupp$fitted.values, aov_trust_vanusegrupp$residuals)) +
+    geom_count()
+
+ggplot(aov_trust_vanusegrupp, 
+       aes(aov_trust_vanusegrupp$model$vanusegrupp,
+           aov_trust_vanusegrupp$residuals)) +
+  geom_boxplot()
+
+resid_yl1_df <- data.frame(aov_trust_vanusegrupp$model$vanusegrupp,
+           aov_trust_vanusegrupp$residuals)
+
+names(resid_yl1_df) <- c("vanusegrupp", "jääk")
+
+resid_yl1_df %>% 
+  group_by(vanusegrupp) %>% 
+  summarise(disp = var(jääk))
+
+resid_yl1 <- aov_trust_vanusegrupp %>% 
+  residuals()
+
+hist(resid_yl1)
+
+ggpubr::ggqqplot(resid_yl1)
+
+descr(resid_yl1)
+```
+
+
+
+
+```{r echo = FALSE, eval = FALSE}
+
+ee9w <- svydesign(id = ~1, data = ee9, weights = ~pspwght)
+
+svyby(~trust, ~vanusegrupp, design = ee9w, FUN = svymean, na.rm = TRUE, vartype = c("se", "ci"))
+
+svyby(~trust, ~vanusegrupp, design = ee9w, FUN = svymean, na.rm = TRUE, vartype = c("se", "ci")) %>% 
+  ggplot(aes(vanusegrupp, trust)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = ci_l, ymax = ci_u), width = 0.1) +
+  xlab("Vanusegrupp") +
+  ylab("Usaldus")
+
+tky[[1]] %>% 
+  as.data.frame() %>% 
+  plot(xlab = "Keskmiste erinevus",
+       ylab = "Vanusegrupp")
+
+TukeyHSD(aov_trust_vanusegrupp)%>% 
+  ggplot(aes(diff, ))
+
+TukeyHSD(aov_trust_vanusegrupp) -> tky
+
+tky[[1]] %>% 
+  as.data.frame() %>% 
+  rownames_to_column("pair") %>% 
+  ggplot(aes(x = diff, y = pair)) +
+  geom_point() +
+  scale_y_discrete(limits = rev)
 
 aov(grspnum ~ as.factor(polintr), ee9, weights = pspwght) %>% 
   TukeyHSD()
@@ -67,11 +320,3 @@ TukeyHSD(aov_trust_vanusegrupp) %>%
 
 posthocPairwiseT(aov_trust_vanusegrupp)
 ```
-
-Kas saab kaalutud andmetega kasutada lsr::posthocPairwiseT samamoodi nagu TukeyHSD-d? Kas lsr-i funktsioon annab ilma ise kaale arvesse võtmata sama tulemuse nagu 
-  - TukeyHSD?
-    - kui p.adjust ei kasuta, siis ei anna, kui kasutada, siis holm annab peaaegu sama tulemuse, aga natuke konservatiivsema
-  - t.test?
-  - wtd.t.test?
-  
-Läheb keeruliseks, lihtsam on öelda, et nii nagu Navarro raamatus on tehtud, saab teha küll, aga lihtsam on TukeyHSD-ga. TukeyHSD peaks arvesse võtma andmete kaalumist, eraldi veel kord kaaluda pole vaja.
